@@ -22,16 +22,34 @@ SET DOCKERCOMPOSE=docker-compose -f "%BASEDIR%\base.yml"
 SET DOCKERCOMPOSE=%DOCKERCOMPOSE% -f "%BASEDIR%\service.mail.yml"
 
 IF "%MOODLE_DOCKER_PHP_VERSION%"=="" (
-    SET MOODLE_DOCKER_PHP_VERSION=7.3
+    SET MOODLE_DOCKER_PHP_VERSION=8.0
 )
 
-IF NOT "%MOODLE_DOCKER_DB%"=="pgsql" (
-    SET DOCKERCOMPOSE=%DOCKERCOMPOSE% -f "%BASEDIR%\db.%MOODLE_DOCKER_DB%.yml"
+SET DOCKERCOMPOSE=%DOCKERCOMPOSE% -f "%BASEDIR%\db.%MOODLE_DOCKER_DB%.yml"
+
+SET filenamedbversion=%BASEDIR%\db.%MOODLE_DOCKER_DB%.%MOODLE_DOCKER_DB_VERSION%.yml
+IF EXIST "%filenamedbversion%" (
+    SET DOCKERCOMPOSE=%DOCKERCOMPOSE% -f "%filenamedbversion%"
 )
 
-SET filename=%BASEDIR%\db.%MOODLE_DOCKER_DB%.%MOODLE_DOCKER_PHP_VERSION%.yml
-if exist %filename% (
-    SET DOCKERCOMPOSE=%DOCKERCOMPOSE% -f "%filename%"
+REM Support PHP version overrides for DB not available any more.
+
+IF "%MOODLE_DOCKER_DB_PORT%"=="" (
+    SET MOODLE_DOCKER_DB_PORT=
+) ELSE (
+    SET "TRUE="
+    IF NOT "%MOODLE_DOCKER_DB_PORT%"=="%MOODLE_DOCKER_DB_PORT::=%" SET TRUE=1
+    IF NOT "%MOODLE_DOCKER_DB_PORT%"=="0" SET TRUE=1
+    IF DEFINED TRUE (
+        REM If no bind ip has been configured (bind_ip:port), default to 127.0.0.1
+        IF "%MOODLE_DOCKER_DB_PORT%"=="%MOODLE_DOCKER_DB_PORT::=%" (
+            SET MOODLE_DOCKER_DB_PORT=127.0.0.1:%MOODLE_DOCKER_DB_PORT%
+        )
+        SET filedbport=%BASEDIR%\db.%MOODLE_DOCKER_DB%.port.yml
+        IF EXIST "%filedbport%" (
+            SET DOCKERCOMPOSE=%DOCKERCOMPOSE% -f "%filedbport%"
+        )
+    )
 )
 
 IF NOT "%MOODLE_APP_VERSION%"=="" (
@@ -46,11 +64,20 @@ IF "%MOODLE_DOCKER_APP_RUNTIME%"=="" (
     SET MOODLE_DOCKER_APP_RUNTIME=ionic5
 )
 
-IF "%MOODLE_DOCKER_BROWSER%"=="chrome" (
+REM Guess mobile app node version
+IF "%MOODLE_DOCKER_APP_NODE_VERSION%"=="" (
     IF NOT "%MOODLE_DOCKER_APP_PATH%"=="" (
-        SET DOCKERCOMPOSE=%DOCKERCOMPOSE% -f "%BASEDIR%\moodle-app-dev-%MOODLE_DOCKER_APP_RUNTIME%.yml"
-    ) ELSE IF NOT "%MOODLE_DOCKER_APP_VERSION%"=="" (
-        SET DOCKERCOMPOSE=%DOCKERCOMPOSE% -f "%BASEDIR%\moodle-app-%MOODLE_DOCKER_APP_RUNTIME%.yml"
+        IF "%MOODLE_DOCKER_APP_RUNTIME%"=="ionic5" (
+            SET filenvmrc=%MOODLE_DOCKER_APP_PATH%\.nvmrc
+            IF EXIST "%filenvmrc%" (
+                SET /p NODE_VERSION=< "%filenvmrc%"
+                SET NODE_VERSION=%NODE_VERSION:v=%
+                ECHO %NODE_VERSION% | FINDSTR /r "[0-9.]*" >nul 2>&1
+                IF ERRORLEVEL 0 (
+                    SET MOODLE_DOCKER_APP_NODE_VERSION=%NODE_VERSION%
+                )
+            )
+        )
     )
 )
 
@@ -75,12 +102,28 @@ IF "%MOODLE_DOCKER_BROWSER_TAG%"=="" (
        )
 )
 
+IF "%MOODLE_DOCKER_BROWSER_NAME%"=="chrome" (
+    IF NOT "%MOODLE_DOCKER_APP_PATH%"=="" (
+        SET DOCKERCOMPOSE=%DOCKERCOMPOSE% -f "%BASEDIR%\moodle-app-dev-%MOODLE_DOCKER_APP_RUNTIME%.yml"
+    ) ELSE IF NOT "%MOODLE_DOCKER_APP_VERSION%"=="" (
+        SET DOCKERCOMPOSE=%DOCKERCOMPOSE% -f "%BASEDIR%\moodle-app-%MOODLE_DOCKER_APP_RUNTIME%.yml"
+    )
+)
+
 IF NOT "%MOODLE_DOCKER_BROWSER_NAME%"=="firefox" (
        SET DOCKERCOMPOSE=%DOCKERCOMPOSE% -f "%BASEDIR%\selenium.%MOODLE_DOCKER_BROWSER_NAME%.yml"
 )
 
 IF NOT "%MOODLE_DOCKER_PHPUNIT_EXTERNAL_SERVICES%"=="" (
     SET DOCKERCOMPOSE=%DOCKERCOMPOSE% -f "%BASEDIR%\phpunit-external-services.yml"
+)
+
+IF NOT "%MOODLE_DOCKER_BBB_MOCK%"=="" (
+    SET DOCKERCOMPOSE=%DOCKERCOMPOSE% -f "%BASEDIR%\bbb-mock.yml"
+)
+
+IF NOT "%MOODLE_DOCKER_MATRIX_MOCK%"=="" (
+    SET DOCKERCOMPOSE=%DOCKERCOMPOSE% -f "%BASEDIR%\matrix-mock.yml"
 )
 
 IF NOT "%MOODLE_DOCKER_BEHAT_FAILDUMP%"=="" (
@@ -126,6 +169,13 @@ IF "%MOODLE_DOCKER_SELENIUM_VNC_PORT%"=="" (
     )
 )
 
-echo %MOODLE_DOCKER_SELENIUM_SUFFIX% %MOODLE_DOCKER_BROWSER_TAG%
+
+REM Apply local customisations if a local.yml is found.
+REM Note: This must be the final modification before the docker-compose command is called.
+SET LOCALFILE=%BASEDIR%\local.yml
+IF EXIST %LOCALFILE% (
+    ECHO Including local options from %localfile%
+    SET DOCKERCOMPOSE=%DOCKERCOMPOSE% -f "%LOCALFILE%"
+)
 
 %DOCKERCOMPOSE% %*
